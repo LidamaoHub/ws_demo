@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Middleware Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #messageArea { height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+        input, button { margin: 5px 0; }
+        #userId { font-weight: bold; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Middleware Test</h1>
+    
+    <div>
+        <label for="wsUrl">WebSocket URL:</label>
+        <input type="text" id="wsUrl" value="ws://localhost:8000/ws" style="width: 300px;">
+    </div>
+    <div>
+        <label for="authToken">Auth Token:</label>
+        <input type="text" id="authToken" value="123456" style="width: 100px;">
+        <button onclick="connectWebSocket()">Connect</button>
+        <button onclick="authenticateWebSocket()">Authenticate</button>
+        <button onclick="disconnectWebSocket()">Disconnect</button>
+    </div>
+    <div>
+        <label>User ID: </label><span id="userId"></span>
+    </div>
+
+    <div id="messageArea"></div>
+
+    <div>
+        <input type="text" id="message" placeholder="Enter message">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+
+    <h2>REST API Tests</h2>
+    <div>
+        <button onclick="getUserCount()">Get User Count</button>
+        <button onclick="getHardwareStatus()">Get Hardware Status</button>
+    </div>
+    <div>
+        <input type="text" id="restMessage" placeholder="Enter message for REST API">
+        <input type="text" id="restUserId" placeholder="User ID (optional)">
+        <button onclick="sendRestMessage()">Send REST Message</button>
+    </div>
+
+    <script>
+        let socket;
+        let currentUserId = '';
+
+        function connectWebSocket() {
+            const url = $('#wsUrl').val();
+            
+            socket = new WebSocket(url);
+
+            socket.onopen = function(e) {
+                addMessage("Connected to WebSocket");
+            };
+
+            socket.onmessage = function(event) {
+                const data = event.data;
+                addMessage(`Received: ${data}`);
+                
+                if (data.startsWith("Your user ID is:")) {
+                    currentUserId = data.split(":")[1].trim();
+                    $('#userId').text(currentUserId);
+                }
+            };
+
+            socket.onclose = function(event) {
+                if (event.wasClean) {
+                    addMessage(`Closed cleanly, code=${event.code}, reason=${event.reason}`);
+                } else {
+                    addMessage('Connection died', true);
+                }
+                $('#userId').text('');
+                currentUserId = '';
+            };
+
+            socket.onerror = function(error) {
+                addMessage(`WebSocket Error: ${error.message}`, true);
+            };
+        }
+
+        function authenticateWebSocket() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const authToken = $('#authToken').val();
+                socket.send(JSON.stringify({type: "auth", token: authToken}));
+                addMessage("Sent authentication request");
+            } else {
+                addMessage("WebSocket is not connected", true);
+            }
+        }
+
+        function disconnectWebSocket() {
+            if (socket) {
+                socket.close();
+                addMessage("Disconnected from WebSocket");
+                $('#userId').text('');
+                currentUserId = '';
+            }
+        }
+
+        function sendMessage() {
+            const message = $('#message').val();
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({type: "message", message: message}));
+                addMessage(`Sent: ${message}`);
+                $('#message').val('');
+            } else {
+                addMessage("WebSocket is not connected", true);
+            }
+        }
+
+        function addMessage(message, isError = false) {
+            const messageElement = $('<div>').text(message);
+            if (isError) {
+                messageElement.addClass('error');
+            }
+            $('#messageArea').append(messageElement);
+            $('#messageArea').scrollTop($('#messageArea')[0].scrollHeight);
+        }
+
+        function getUserCount() {
+            $.get('http://localhost:8000/user_count', function(data) {
+                addMessage(`User count: ${data.user_count}`);
+            }).fail(function(jqXHR, textStatus, errorThrown) {
+                addMessage(`Error getting user count: ${errorThrown}`, true);
+            });
+        }
+
+        function getHardwareStatus() {
+            $.get('http://localhost:8000/hardware_status', function(data) {
+                addMessage(`CPU: ${data.cpu_percent}%, Memory: ${data.memory_percent}%`);
+            }).fail(function(jqXHR, textStatus, errorThrown) {
+                addMessage(`Error getting hardware status: ${errorThrown}`, true);
+            });
+        }
+
+        function sendRestMessage() {
+            const message = $('#restMessage').val();
+            const userId = $('#restUserId').val() || null;  // If empty, set to null
+            $.ajax({
+                url: 'http://localhost:8000/message',
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({ message: message, userid: userId }),
+                success: function(response) {
+                    addMessage(`REST API response: ${JSON.stringify(response)}`);
+                },
+                error: function(xhr, status, error) {
+                    addMessage(`Error sending REST message: ${error}`, true);
+                    console.error(xhr.responseText);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
