@@ -108,8 +108,10 @@
 
         function sendMessage() {
             const message = $('#message').val();
+            const authToken = $('#authToken').val();
             if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({type: "message", message: message}));
+
+                socket.send(JSON.stringify({type: "message", message: message,token: authToken}));
                 addMessage(`Sent: ${message}`);
                 $('#message').val('');
             } else {
