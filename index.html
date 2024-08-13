@@ -18,7 +18,7 @@
     
     <div>
         <label for="wsUrl">WebSocket URL:</label>
-        <input type="text" id="wsUrl" value="ws://localhost:8000/ws" style="width: 300px;">
+        <input type="text" id="wsUrl" value="ws://ws_demo.lidamao.tech/ws" style="width: 300px;">
     </div>
     <div>
         <label for="authToken">Auth Token:</label>
@@ -33,6 +33,7 @@
 
     <div id="messageArea"></div>
 
+   
 
     <h2>REST API Tests</h2>
     <div>
@@ -106,8 +107,7 @@
             const message = $('#message').val();
             const authToken = $('#authToken').val();
             if (socket && socket.readyState === WebSocket.OPEN) {
-
-                socket.send(JSON.stringify({type: "message", message: message,token: authToken}));
+                socket.send(JSON.stringify({type: "message", message: message, token: authToken}));
                 addMessage(`Sent: ${message}`);
                 $('#message').val('');
             } else {
@@ -125,7 +125,8 @@
         }
 
         function getUserCount() {
-            $.get('http://localhost:8000/user_count', function(data) {
+            const baseUrl = $('#wsUrl').val().replace('ws://', 'http://').replace('/ws', '');
+            $.get(`${baseUrl}/user_count`, function(data) {
                 addMessage(`User count: ${data.user_count}`);
             }).fail(function(jqXHR, textStatus, errorThrown) {
                 addMessage(`Error getting user count: ${errorThrown}`, true);
@@ -133,7 +134,8 @@
         }
 
         function getHardwareStatus() {
-            $.get('http://localhost:8000/hardware_status', function(data) {
+            const baseUrl = $('#wsUrl').val().replace('ws://', 'http://').replace('/ws', '');
+            $.get(`${baseUrl}/hardware_status`, function(data) {
                 addMessage(`CPU: ${data.cpu_percent}%, Memory: ${data.memory_percent}%`);
             }).fail(function(jqXHR, textStatus, errorThrown) {
                 addMessage(`Error getting hardware status: ${errorThrown}`, true);
@@ -143,8 +145,9 @@
         function sendRestMessage() {
             const message = $('#restMessage').val();
             const userId = $('#restUserId').val() || null;  // If empty, set to null
+            const baseUrl = $('#wsUrl').val().replace('ws://', 'http://').replace('/ws', '');
             $.ajax({
-                url: 'http://localhost:8000/message',
+                url: `${baseUrl}/message`,
                 type: 'POST',
                 contentType: 'application/json',
                 data: JSON.stringify({ message: message, userid: userId }),
