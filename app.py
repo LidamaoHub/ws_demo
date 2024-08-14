@@ -1,56 +1,63 @@
-import os
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict, Optional
 import json
 from pydantic import BaseModel
 import logging
+import asyncio
+from typing import Dict, Set, Optional
 
-# Set up logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
-        self.authenticated_users: Dict[int, str] = {}  # 使用 WebSocket 的 id 作为键
+        self.authenticated_users: Set[str] = set()
 
-    async def connect(self, websocket: WebSocket):
+    async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
-    
-
-    async def authenticate(self, websocket: WebSocket, user_id: str):
         self.active_connections[user_id] = websocket
-        self.authenticated_users[id(websocket)] = user_id  # 使用 WebSocket 对象的 id
+        logger.info(f"New connection established for user {user_id}")
 
-    async def authenticate(self, websocket: WebSocket, user_id: str):
-        self.active_connections[user_id] = websocket
-        self.authenticated_users[websocket] = user_id
+    def authenticate(self, user_id: str):
+        self.authenticated_users.add(user_id)
+        logger.info(f"User {user_id} authenticated")
 
-    def disconnect(self, websocket: WebSocket):
-        user_id = self.authenticated_users.get(id(websocket))
-        if user_id:
-            self.active_connections.pop(user_id, None)
-            self.authenticated_users.pop(id(websocket), None)
+    def disconnect(self, user_id: str):
+        self.active_connections.pop(user_id, None)
+        self.authenticated_users.discard(user_id)
+        logger.info(f"User {user_id} disconnected")
 
     async def send_personal_message(self, message: str, user_id: str):
         if user_id in self.active_connections:
-            await self.active_connections[user_id].send_text(message)
+            try:
+                await self.active_connections[user_id].send_text(message)
+            except Exception as e:
+                logger.error(f"Error sending message to user {user_id}: {str(e)}")
+                self.disconnect(user_id)
 
     async def broadcast(self, message: str):
-        for connection in self.active_connections.values():
-            await connection.send_text(message)
+        disconnected = []
+        for user_id, connection in self.active_connections.items():
+            if user_id in self.authenticated_users:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    logger.error(f"Error broadcasting to user {user_id}: {str(e)}")
+                    disconnected.append(user_id)
+        
+        for user_id in disconnected:
+            self.disconnect(user_id)
 
 manager = ConnectionManager()
 
@@ -60,33 +67,46 @@ class Message(BaseModel):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    await manager.connect(websocket)
+    user_id = None
     try:
-        while True:
-            data = await websocket.receive_text()
-            try:
+        user_id = f"user_{len(manager.active_connections) + 1}"
+        await manager.connect(websocket, user_id)
+        
+        try:
+            data = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+            message = json.loads(data)
+            logger.debug(f"Received message: {message}")
+            
+            if message.get('type') != 'auth' or message.get('token') != '123456':
+                logger.warning(f"Authentication failed for user {user_id}")
+                await websocket.send_text("Authentication failed")
+                await websocket.close(code=4000)
+                return
+
+            manager.authenticate(user_id)
+            await websocket.send_text(f"Your user ID is: {user_id}")
+
+            while True:
+                data = await websocket.receive_text()
                 message = json.loads(data)
-            except json.JSONDecodeError:
-                await websocket.send_text("Invalid message format. Please send JSON.")
-                continue
-
-            if message.get('type') == 'auth':
-                if message.get('token') == '123456':  # 您的身份验证逻辑
-                    user_id = f"user_{len(manager.active_connections) + 1}"
-                    await manager.authenticate(websocket, user_id)
-                    await websocket.send_text(f"Your user ID is: {user_id}")
-                else:
-                    await websocket.send_text("Authentication failed. Please try again.")
-            elif id(websocket) in manager.authenticated_users:  # 使用 WebSocket 的 id 检查身份验证
-                user_id = manager.authenticated_users[id(websocket)]
+                logger.debug(f"Received message from {user_id}: {message}")
                 await manager.broadcast(f"Message from {user_id}: {message.get('message', '')}")
-            else:
-                await websocket.send_text("Please authenticate first.")
-
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-        user_id = manager.authenticated_users.get(id(websocket))
+        except asyncio.TimeoutError:
+            logger.warning(f"Authentication timeout for user {user_id}")
+            await websocket.close(code=4000)
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket disconnected for user {user_id}")
+        except json.JSONDecodeError:
+            logger.error(f"Invalid JSON received from user {user_id}")
+            await websocket.close(code=4000)
+        except Exception as e:
+            logger.error(f"Unexpected error for user {user_id}: {str(e)}")
+            await websocket.close(code=4000)
+    except Exception as e:
+        logger.error(f"Error in websocket_endpoint: {str(e)}")
+    finally:
         if user_id:
+            manager.disconnect(user_id)
             await manager.broadcast(f"User {user_id} left the chat")
 
 @app.post("/message")
@@ -94,13 +114,16 @@ async def send_message(message: Message):
     if message.userid:
         await manager.send_personal_message(message.message, message.userid)
     else:
-        await manager.broadcast(message.message)
+        await manager.broadcast(f"REST API Message: {message.message}")
     return {"status": "Message sent"}
 
 @app.get("/user_count")
 async def get_user_count():
-    return {"user_count": len(manager.active_connections)}
+    return {
+        "total_connections": len(manager.active_connections),
+        "authenticated_users": len(manager.authenticated_users)
+    }
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

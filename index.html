@@ -8,7 +8,7 @@
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
         #messageArea { height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
-        input, button { margin: 5px 0; }
+        input, button, select { margin: 5px 0; }
         #userId { font-weight: bold; }
         .error { color: red; }
     </style>
@@ -17,14 +17,20 @@
     <h1>WebSocket Middleware Test</h1>
     
     <div>
-        <label for="wsUrl">WebSocket URL:</label>
-        <input type="text" id="wsUrl" value="wss://ws_demo.lidamao.tech/ws" style="width: 300px;">
+        <label for="protocol">Protocol:</label>
+        <select id="protocol">
+            <option value="ws">ws:// (Local/Unsecure)</option>
+            <option value="wss">wss:// (Remote/Secure)</option>
+        </select>
+    </div>
+    <div>
+        <label for="wsUrl">Server URL:</label>
+        <input type="text" id="wsUrl" style="width: 300px;">
     </div>
     <div>
         <label for="authToken">Auth Token:</label>
         <input type="text" id="authToken" value="123456" style="width: 100px;">
-        <button onclick="connectWebSocket()">Connect</button>
-        <button onclick="authenticateWebSocket()">Authenticate</button>
+        <button id="connectBtn" onclick="connectWebSocket()">Connect and Authenticate</button>
         <button onclick="disconnectWebSocket()">Disconnect</button>
     </div>
     <div>
@@ -33,12 +39,14 @@
 
     <div id="messageArea"></div>
 
-   
+    <div>
+        <input type="text" id="message" placeholder="Enter message">
+        <button onclick="sendMessage()">Send</button>
+    </div>
 
     <h2>REST API Tests</h2>
     <div>
         <button onclick="getUserCount()">Get User Count</button>
-        <button onclick="getHardwareStatus()">Get Hardware Status</button>
     </div>
     <div>
         <input type="text" id="restMessage" placeholder="Enter message for REST API">
@@ -50,13 +58,61 @@
         let socket;
         let currentUserId = '';
 
-        function connectWebSocket() {
-            const url = $('#wsUrl').val();
+        // 加载保存的设置
+        function loadSettings() {
+            const savedProtocol = localStorage.getItem('wsProtocol');
+            const savedUrl = localStorage.getItem('wsUrl');
             
-            socket = new WebSocket(url);
+            if (savedProtocol) {
+                $('#protocol').val(savedProtocol);
+            }
+            if (savedUrl) {
+                $('#wsUrl').val(savedUrl);
+            } else {
+                $('#wsUrl').val('ws_demo.lidamao.tech');  // 默认值
+            }
+        }
+
+        // 保存设置
+        function saveSettings() {
+            const protocol = $('#protocol').val();
+            const url = $('#wsUrl').val();
+            localStorage.setItem('wsProtocol', protocol);
+            localStorage.setItem('wsUrl', url);
+        }
+
+        // 在页面加载时调用
+        $(document).ready(function() {
+            loadSettings();
+            
+            // 添加change事件监听器
+            $('#protocol, #wsUrl').change(saveSettings);
+        });
+
+        function getWebSocketUrl() {
+            const protocol = $('#protocol').val();
+            const baseUrl = $('#wsUrl').val();
+            return `${protocol}://${baseUrl}/ws`;
+        }
+
+        function getHttpUrl() {
+            const protocol = $('#protocol').val() === 'wss' ? 'https' : 'http';
+            const baseUrl = $('#wsUrl').val();
+            return `${protocol}://${baseUrl}`;
+        }
+
+        function connectWebSocket() {
+            const wsUrl = getWebSocketUrl();
+            const authToken = $('#authToken').val();
+            
+            addMessage(`Attempting to connect to: ${wsUrl}`);
+            
+            socket = new WebSocket(wsUrl);
 
             socket.onopen = function(e) {
-                addMessage("Connected to WebSocket");
+                addMessage("WebSocket connection established");
+                addMessage("Sending authentication request...");
+                socket.send(JSON.stringify({type: "auth", token: authToken}));
             };
 
             socket.onmessage = function(event) {
@@ -66,6 +122,11 @@
                 if (data.startsWith("Your user ID is:")) {
                     currentUserId = data.split(":")[1].trim();
                     $('#userId').text(currentUserId);
+                    $('#connectBtn').prop('disabled', true);
+                    $('#authToken').prop('disabled', true);
+                } else if (data === "Authentication failed") {
+                    addMessage("Authentication failed. Please check your token.", true);
+                    socket.close();
                 }
             };
 
@@ -77,21 +138,13 @@
                 }
                 $('#userId').text('');
                 currentUserId = '';
+                $('#connectBtn').prop('disabled', false);
+                $('#authToken').prop('disabled', false);
             };
 
             socket.onerror = function(error) {
                 addMessage(`WebSocket Error: ${error.message}`, true);
             };
-        }
-
-        function authenticateWebSocket() {
-            if (socket && socket.readyState === WebSocket.OPEN) {
-                const authToken = $('#authToken').val();
-                socket.send(JSON.stringify({type: "auth", token: authToken}));
-                addMessage("Sent authentication request");
-            } else {
-                addMessage("WebSocket is not connected", true);
-            }
         }
 
         function disconnectWebSocket() {
@@ -100,14 +153,15 @@
                 addMessage("Disconnected from WebSocket");
                 $('#userId').text('');
                 currentUserId = '';
+                $('#connectBtn').prop('disabled', false);
+                $('#authToken').prop('disabled', false);
             }
         }
 
         function sendMessage() {
             const message = $('#message').val();
-            const authToken = $('#authToken').val();
             if (socket && socket.readyState === WebSocket.OPEN) {
-                socket.send(JSON.stringify({type: "message", message: message, token: authToken}));
+                socket.send(JSON.stringify({type: "message", message: message}));
                 addMessage(`Sent: ${message}`);
                 $('#message').val('');
             } else {
@@ -125,27 +179,18 @@
         }
 
         function getUserCount() {
-            const baseUrl = $('#wsUrl').val().replace('ws://', 'http://').replace('/ws', '');
+            const baseUrl = getHttpUrl();
             $.get(`${baseUrl}/user_count`, function(data) {
-                addMessage(`User count: ${data.user_count}`);
+                addMessage(`Total connections: ${data.total_connections}, Authenticated users: ${data.authenticated_users}`);
             }).fail(function(jqXHR, textStatus, errorThrown) {
                 addMessage(`Error getting user count: ${errorThrown}`, true);
             });
         }
 
-        function getHardwareStatus() {
-            const baseUrl = $('#wsUrl').val().replace('ws://', 'http://').replace('/ws', '');
-            $.get(`${baseUrl}/hardware_status`, function(data) {
-                addMessage(`CPU: ${data.cpu_percent}%, Memory: ${data.memory_percent}%`);
-            }).fail(function(jqXHR, textStatus, errorThrown) {
-                addMessage(`Error getting hardware status: ${errorThrown}`, true);
-            });
-        }
-
         function sendRestMessage() {
             const message = $('#restMessage').val();
-            const userId = $('#restUserId').val() || null;  // If empty, set to null
-            const baseUrl = $('#wsUrl').val().replace('ws://', 'http://').replace('/ws', '');
+            const userId = $('#restUserId').val() || null;
+            const baseUrl = getHttpUrl();
             $.ajax({
                 url: `${baseUrl}/message`,
                 type: 'POST',
