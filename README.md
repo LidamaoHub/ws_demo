@@ -1,101 +1,89 @@
-# WebSocket Middleware
+# WebSocket Middleware Project
 
-This project implements a WebSocket middleware with the following features:
+This project implements a WebSocket middleware with a user-friendly frontend interface. It demonstrates real-time communication, user authentication, and REST API integration.
 
-1. WebSocket connection with authentication
-2. Broadcasting messages to all authenticated users
-3. Sending personal messages to specific users
-4. REST API for sending messages and getting user count
-5. Hardware status monitoring for the Docker container
+## Features
 
-## Prerequisites
+- WebSocket connection with authentication
+- Real-time message broadcasting
+- Personal messaging support
+- REST API for sending messages and getting user counts
+- Frontend interface with protocol and server URL selection
+- Local storage of user preferences for protocol and server URL
+- Responsive UI with connection status indicators
 
-- Docker
-- Docker Compose (optional, for easier deployment)
+## Backend Setup
 
-## Deployment
+### Prerequisites
 
-1. Clone this repository:
+- Python 3.7+
+- FastAPI
+- Uvicorn
+
+### Installation
+
+1. Clone the repository:
    ```
    git clone <repository-url>
-   cd <repository-directory>
+   cd <project-directory>
    ```
 
-2. Build the Docker image:
+2. Install the required packages:
    ```
-   docker build -t websocket-middleware .
-   ```
-
-3. Run the Docker container:
-   ```
-   docker run -d -p 8000:8000 websocket-middleware
+   pip install fastapi uvicorn
    ```
 
-   Or, if you prefer using Docker Compose, create a `docker-compose.yml` file with the following content:
-
-   ```yaml
-   version: '3'
-   services:
-     websocket-middleware:
-       build: .
-       ports:
-         - "8000:8000"
+3. Run the server:
+   ```
+   uvicorn app:app --host 0.0.0.0 --port 8000
    ```
 
-   Then run:
-   ```
-   docker-compose up -d
-   ```
+## Frontend Setup
 
-4. (Optional) Set up Nginx as a reverse proxy:
-   - Copy the provided `nginx.conf` to your Nginx configuration directory.
-   - Modify the `server_name` directive in the `nginx.conf` file to match your domain.
-   - Restart Nginx.
+The frontend is a single HTML file (`index.html`) that can be opened directly in a web browser. No additional setup is required.
 
 ## Usage
 
-### WebSocket Connection
+1. Open `index.html` in a web browser.
 
-Connect to the WebSocket at `ws://localhost:8000/ws`
+2. Select the protocol (ws:// or wss://) and enter the server URL.
 
-### Authentication
+3. Enter an authentication token (default is "123456").
 
-Send a JSON message with the following format:
-```json
-{
-  "type": "auth",
-  "token": "123456"
-}
-```
+4. Click "Connect and Authenticate" to establish a WebSocket connection.
 
-### Sending Messages
+5. Once authenticated, you can send and receive real-time messages.
 
-After authentication, send a JSON message with the following format:
-```json
-{
-  "type": "message",
-  "message": "Your message here"
-}
-```
+6. Use the REST API section to test HTTP endpoints.
 
-### REST API
+## Key Components
 
-- Send a message: 
-  POST to `http://localhost:8000/message`
-  ```json
-  {
-    "message": "Your message here",
-    "userid": "optional-user-id"
-  }
-  ```
+### Backend (`app.py`)
 
-- Get user count:
-  GET `http://localhost:8000/user_count`
+- `ConnectionManager`: Manages WebSocket connections and user authentication.
+- `/ws` endpoint: Handles WebSocket connections and authentication.
+- `/message` endpoint: Allows sending messages via REST API.
+- `/user_count` endpoint: Returns the count of total and authenticated users.
 
-- Get hardware status:
-  GET `http://localhost:8000/hardware_status`
+### Frontend (`index.html`)
 
-## Customization
+- WebSocket connection and message handling
+- User interface for sending messages and interacting with the server
+- Local storage of user preferences (protocol and server URL)
 
-- To change the authentication token, modify the condition in the `websocket_endpoint` function in `app.py`.
-- To add more features or modify existing ones, edit `app.py` and rebuild the Docker image.
+## Local Storage Feature
+
+The frontend now saves the user's protocol choice (ws:// or wss://) and server URL to the browser's local storage. This means that when a user refreshes the page or returns later, their previous settings will be automatically loaded.
+
+## Testing
+
+1. Start the backend server.
+2. Open the frontend HTML file in a browser.
+3. Connect to the WebSocket server using the provided interface.
+4. Test sending and receiving messages.
+5. Use the REST API section to test HTTP endpoints.
+
+## Notes
+
+- The default authentication token is "123456". In a real-world scenario, implement proper security measures.
+- Ensure your server supports WebSocket connections if deploying to a production environment.
