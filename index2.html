@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket Middleware Test</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        #messageArea { height: 300px; overflow-y: scroll; border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; }
+        input, button, select { margin: 5px 0; }
+        #userId { font-weight: bold; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>WebSocket Middleware Test</h1>
+    <div>
+        <label for="protocol">Protocol:</label>
+        <select id="protocol">
+            <option value="ws">ws:// (Local/Unsecure)</option>
+            <option value="wss">wss:// (Remote/Secure)</option>
+        </select>
+    </div>
+    <div>
+        <label for="wsUrl">Server URL:</label>
+        <input type="text" id="wsUrl" style="width: 300px;">
+    </div>
+    <div>
+        <label for="authToken">Auth Token:</label>
+        <input type="text" id="authToken" value="123456" style="width: 100px;">
+        <button id="connectBtn" onclick="connectWebSocket()">Connect and Authenticate</button>
+        <button onclick="disconnectWebSocket()">Disconnect</button>
+    </div>
+    <div>
+        <label>User ID: </label><span id="userId"></span>
+    </div>
+    <div id="messageArea"></div>
+    <div>
+        <input type="text" id="message" placeholder="Enter message">
+        <button onclick="sendMessage()">Send</button>
+    </div>
+    <h2>REST API Tests</h2>
+    <div>
+        <button onclick="getUserCount()">Get User Count</button>
+    </div>
+    <div>
+        <input type="text" id="restMessage" placeholder="Enter message for REST API">
+        <input type="text" id="restUserId" placeholder="User ID (optional)">
+        <button onclick="sendRestMessage()">Send REST Message</button>
+    </div>
+    <script>
+        let socket;
+        let currentUserId = '';
+        let heartbeatInterval;
+
+        $(document).ready(function() {
+            loadSettings();
+            $('#protocol, #wsUrl').change(saveSettings);
+        });
+
+        function loadSettings() {
+            const savedProtocol = localStorage.getItem('wsProtocol');
+            const savedUrl = localStorage.getItem('wsUrl');
+            $('#protocol').val(savedProtocol ? savedProtocol : 'ws');
+            $('#wsUrl').val(savedUrl ? savedUrl : 'ws_demo.lidamao.tech');
+        }
+
+        function saveSettings() {
+            const protocol = $('#protocol').val();
+            const url = $('#wsUrl').val();
+            localStorage.setItem('wsProtocol', protocol);
+            localStorage.setItem('wsUrl', url);
+        }
+
+        function getWebSocketUrl() {
+            return `${$('#protocol').val()}://${$('#wsUrl').val()}/ws`;
+        }
+
+        function getHttpUrl() {
+            return `${$('#protocol').val() === 'wss' ? 'https' : 'http'}://${$('#wsUrl').val()}`;
+        }
+
+        function connectWebSocket() {
+            const wsUrl = getWebSocketUrl();
+            const authToken = $('#authToken').val();
+            addMessage(`Attempting to connect to: ${wsUrl}`);
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = function() {
+                addMessage("WebSocket connection established");
+                addMessage("Sending authentication request...");
+                socket.send(JSON.stringify({type: "auth", token: authToken}));
+            };
+
+            socket.onmessage = function(event) {
+                const data = event.data;
+                addMessage(`Received: ${data}`);
+
+                if (data.startsWith("Your user ID is:")) {
+                    currentUserId = data.split(":")[1].trim();
+                    $('#userId').text(currentUserId);
+                    $('#connectBtn').prop('disabled', true);
+                    $('#authToken').prop('disabled', true);
+                    startHeartbeat();
+                } else if (data === "Authentication failed") {
+                    addMessage("Authentication failed. Please check your token.", true);
+                    socket.close();
+                }
+            };
+
+            socket.onclose = function(event) {
+                addMessage(`Closed cleanly, code=${event.code}, reason=${event.reason}`);
+                stopHeartbeat();
+                $('#userId').text('');
+                currentUserId = '';
+                $('#connectBtn').prop('disabled', false);
+                $('#authToken').prop('disabled', false);
+            };
+
+            socket.onerror = function(error) {
+                addMessage(`WebSocket Error: ${error.message}`, true);
+            };
+        }
+
+        function disconnectWebSocket() {
+            if (socket) {
+                socket.close();
+                addMessage("Disconnected from WebSocket");
+                stopHeartbeat();
+            }
+        }
+
+        function sendMessage() {
+            const message = $('#message').val();
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({type: "message", message: message}));
+                addMessage(`Sent: ${message}`);
+                $('#message').val('');
+            } else {
+                addMessage("WebSocket is not connected", true);
+            }
+        }
+
+        function addMessage(message, isError = false) {
+            const messageElement = $('<div>').text(message);
+            if (isError) messageElement.addClass('error');
+            $('#messageArea').append(messageElement);
+            $('#messageArea').scrollTop($('#messageArea')[0].scrollHeight);
+        }
+
+        function getUserCount() {
+            $.get(`${getHttpUrl()}/user_count`, function(data) {
+                addMessage(`Total connections: ${data.total_connections}, Authenticated users: ${data.authenticated_users}`);
+            }).fail(function(jqXHR, textStatus, errorThrown) {
+                addMessage(`Error getting user count: ${errorThrown}`, true);
+            });
+        }
+
+        function sendRestMessage() {
+            const message = $('#restMessage').val();
+            const userId = $('#restUserId').val() || null;
+            $.ajax({
+                url: `${getHttpUrl()}/message`,
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({message: message, userid: userId}),
+                success: function(response) {
+                    addMessage(`REST API response: ${JSON.stringify(response)}`);
+                },
+                error: function(xhr, status, error) {
+                    addMessage(`Error sending REST message: ${error}`, true);
+                    console.error(xhr.responseText);
+                }
+            });
+        }
+
+        function startHeartbeat() {
+            heartbeatInterval = setInterval(() => {
+                if (socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({type: "heartbeat"}));
+                }
+            }, 5000);  // 5 seconds interval for testing, adjust as needed
+        }
+
+        function stopHeartbeat() {
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+            }
+        }
+    </script>
+</body>
+</html>

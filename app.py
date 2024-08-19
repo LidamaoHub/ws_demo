@@ -1,6 +1,6 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import json
+import json,time
 from pydantic import BaseModel
 import logging
 import asyncio
@@ -23,14 +23,17 @@ class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, WebSocket] = {}
         self.authenticated_users: Set[str] = set()
+        self.last_ping: Dict[str, float] = {}  # 记录每个用户的最后心跳时间
 
     async def connect(self, websocket: WebSocket, user_id: str):
         await websocket.accept()
         self.active_connections[user_id] = websocket
+
         logger.info(f"New connection established for user {user_id}")
 
     def authenticate(self, user_id: str):
         self.authenticated_users.add(user_id)
+        self.last_ping[user_id] = time.time()
         logger.info(f"User {user_id} authenticated")
 
     def disconnect(self, user_id: str):
@@ -88,9 +91,21 @@ async def websocket_endpoint(websocket: WebSocket):
 
             while True:
                 data = await websocket.receive_text()
+
                 message = json.loads(data)
+                if "type" in message and message['type']=="heartbeat":
+                    current_time = time.time()
+                    if (current_time - manager.last_ping.get(user_id, 0)) > 10:
+                        logger.warning(f"Heartbeat timeout for user {user_id}")
+                        manager.disconnect(user_id)
+
+
+
                 logger.debug(f"Received message from {user_id}: {message}")
                 await manager.broadcast(f"Message from {user_id}: {message.get('message', '')}")
+
+
+
         except asyncio.TimeoutError:
             logger.warning(f"Authentication timeout for user {user_id}")
             await websocket.close(code=4000)
